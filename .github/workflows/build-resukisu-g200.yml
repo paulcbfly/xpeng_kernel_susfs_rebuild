@@ -68,7 +68,7 @@ jobs:
           KERNEL_VER_LABEL: "5.4.302"
           ROM_ID: S3RXC32.33-8-25
           UPDATE_RESUKISU: ${{ inputs.update_resukisu || 'false' }}
-          KERNEL_URL: https://github.com/paulcbfly/android_kernel_motorola_xpeng.git
+          KERNEL_URL: https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild.git
           KERNEL_BRANCH: 5.4.302-s3rxc32.33-8-25-susfs
           CLANG_GIT_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
           GCC_GIT_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build xpeng MMI kernel (ReSukiSU), WLAN KSU module, repack boot, pack AnyKernel3.
 #
-# This script lives in android_kernel_motorola_xpeng_build and clones kernel sources
-# from github.com/LuoJuly/android_kernel_motorola_xpeng (not vendored here).
+# This script lives in xpeng_kernel_susfs_rebuild and clones kernel sources
+# from github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild (not vendored here).
 #
 # Variants:
 #   VARIANT=edge-s30  ENABLE_NFC=false  -> Moto Edge S30 (XT2175-2)
@@ -45,7 +45,7 @@ BOOT_OEM_ASSET_NAME="${BOOT_OEM_ASSET_NAME:-boot_oem.img}"
 BUILD_WLAN="${BUILD_WLAN:-true}"
 WLAN_TAG="${WLAN_TAG:-MMI-S3RXC32.33-8-29}"
 
-KERNEL_URL="${KERNEL_URL:-https://github.com/paulcbfly/android_kernel_motorola_xpeng.git}"
+KERNEL_URL="${KERNEL_URL:-https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild.git}"
 KERNEL_BRANCH="${KERNEL_BRANCH:-5.4.302-s3rxc32.33-8-25-susfs}"
 KERNEL_DIR="${KERNEL_DIR:-${BUILD_ROOT}/.ci-src/android_kernel_motorola_xpeng}"
 
@@ -698,7 +698,7 @@ This replaces the kernel **and** vendor WiFi \`qca_cld3_*.ko\` (\`do.modules=1\`
 - \`AnyKernel3-*.zip\` — flashable zip (kernel + vendor WiFi kos; no KernelSU WiFi module needed)
 - \`wlan_crc_match_*-ksu-*.zip\` — optional KernelSU/Magisk overlay **only if** you flash \`boot_ksu.img\` via fastboot (does not replace vendor kos)
 
-> Built automatically from \`android_kernel_motorola_xpeng_build\` (\`5.4.302-s3rxc32.33-8-25-ReSukiSU\`) using kernel sources from [android_kernel_motorola_xpeng @ 5.4.302-s3rxc32.33-8-25](https://github.com/LuoJuly/android_kernel_motorola_xpeng/tree/5.4.302-s3rxc32.33-8-25) with ReSukiSU + live-built WiFi kos + latest AnyKernel3 upstream.
+> Built automatically from \`xpeng_kernel_susfs_rebuild\` (\`5.4.302-s3rxc32.33-8-25-ReSukiSU\`) using kernel sources from [android_kernel_motorola_xpeng_rebuild @ 5.4.302-s3rxc32.33-8-25-susfs](https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild/tree/5.4.302-s3rxc32.33-8-25-susfs) with ReSukiSU + live-built WiFi kos + latest AnyKernel3 upstream.
 EOF
   gh_env RELEASE_NOTES "${WORK_DIR}/release/RELEASE_NOTES.md"
   info "Release notes written"
