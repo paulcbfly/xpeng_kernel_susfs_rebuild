@@ -49,7 +49,6 @@ KERNEL_URL="${KERNEL_URL:-https://github.com/paulcbfly/android_kernel_motorola_x
 
 # SUSFS version -> kernel branch mapping.
 #   v2.2 (default): pure r7 baseline, SUSFS v2.2.0, verified "mobile data works".
-#   v2.3           : same baseline + AstideLabs SUSFS v2.3 fs/ patches.
 # An explicit KERNEL_BRANCH always wins (handy for testing ad-hoc branches).
 SUSFS_VERSION="${SUSFS_VERSION:-v2.2}"
 if [[ -z "${KERNEL_BRANCH:-}" ]]; then
