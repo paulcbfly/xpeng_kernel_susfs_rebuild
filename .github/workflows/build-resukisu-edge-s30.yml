@@ -6,8 +6,21 @@ on:
     - cron: "0 0 1 * *"
   workflow_dispatch:
     inputs:
+      module:
+        description: "Optional module branch to build (none = SUSFS-only). 'all' compiles every module at once."
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - rekernel
+          - baseband-guard
+          - droidspaces
+          - nomount
+          - no-kprobe
+          - all
       susfs_version:
-        description: "SUSFS version (v2.2 = r7 baseline w/ working mobile data; v2.3 = AstideLabs v2.3 patches)"
+        description: "SUSFS version (ignored when module != none; no-kprobe implies v2.3)"
         required: true
         default: v2.2
         type: choice
@@ -75,6 +88,7 @@ jobs:
           BUILD_WLAN: "true"
           KERNEL_VER_LABEL: "5.4.302"
           ROM_ID: S3RXC32.33-8-25
+          MODULE: ${{ inputs.module || 'none' }}
           SUSFS_VERSION: ${{ inputs.susfs_version || 'v2.2' }}
           UPDATE_RESUKISU: ${{ inputs.update_resukisu || '' }}
           KERNEL_URL: https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild.git
@@ -112,7 +126,7 @@ jobs:
           name: ${{ env.RELEASE_NAME }}
           body_path: .ci-work/edge-s30/release/RELEASE_NOTES.md
           files: |
-            .ci-work/edge-s30/release/boot_ksu-SUSFS${{ env.SUSFS_VERSION }}.img
+            .ci-work/edge-s30/release/boot_ksu*.img
             .ci-work/edge-s30/release/Image
             .ci-work/edge-s30/release/AnyKernel3-*.zip
             .ci-work/edge-s30/release/wlan_crc_match*-ksu-*.zip

@@ -47,20 +47,47 @@ WLAN_TAG="${WLAN_TAG:-MMI-S3RXC32.33-8-29}"
 
 KERNEL_URL="${KERNEL_URL:-https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild.git}"
 
-# SUSFS version -> kernel branch mapping.
-#   v2.2 (default): pure r7 baseline, SUSFS v2.2.0, verified "mobile data works".
-#   v2.3           : same baseline + AstideLabs SUSFS v2.3 fs/ patches.
+# SUSFS version / optional module -> kernel branch mapping.
+#
+#   SUSFS_VERSION  v2.2 (default) -> pure r7 baseline, mobile data verified OK
+#                  v2.3            -> r7 baseline + AstideLabs SUSFS v2.3 fs/
+#
+#   MODULE         (optional, default "none") selects one adapted module branch.
+#                  Each module lives on its own branch, all based on the r7
+#                  baseline EXCEPT no-kprobe which needs SUSFS v2.3.
+#                  none | rekernel | baseband-guard | droidspaces | nomount |
+#                  no-kprobe | all
+#                  "all" is the combined branch used to compile-test every
+#                  module at once.
+#
 # An explicit KERNEL_BRANCH always wins (handy for testing ad-hoc branches).
 SUSFS_VERSION="${SUSFS_VERSION:-v2.2}"
+MODULE="${MODULE:-none}"
 if [[ -z "${KERNEL_BRANCH:-}" ]]; then
-  case "${SUSFS_VERSION}" in
-    v2.2|2.2)   KERNEL_BRANCH="5.4.302-s3rxc32.33-8-25-susfs" ;;
-    v2.3|2.3)   KERNEL_BRANCH="feat/susfs-v2.3" ;;
-    *)
-      echo "[!] Unknown SUSFS_VERSION=${SUSFS_VERSION} (use v2.2 or v2.3)" >&2
-      exit 1
-      ;;
-  esac
+  if [[ "${MODULE}" != "none" ]]; then
+    case "${MODULE}" in
+      rekernel)        KERNEL_BRANCH="feat/rekernel" ;;
+      baseband-guard)  KERNEL_BRANCH="feat/baseband-guard" ;;
+      droidspaces)     KERNEL_BRANCH="feat/droidspaces" ;;
+      nomount)         KERNEL_BRANCH="feat/nomount" ;;
+      no-kprobe)       KERNEL_BRANCH="feat/no-kprobe" ;;
+      all)             KERNEL_BRANCH="feat/all-modules" ;;
+      *)
+        echo "[!] Unknown MODULE=${MODULE}" >&2
+        echo "    use: none|rekernel|baseband-guard|droidspaces|nomount|no-kprobe|all" >&2
+        exit 1
+        ;;
+    esac
+  else
+    case "${SUSFS_VERSION}" in
+      v2.2|2.2)   KERNEL_BRANCH="5.4.302-s3rxc32.33-8-25-susfs" ;;
+      v2.3|2.3)   KERNEL_BRANCH="feat/susfs-v2.3" ;;
+      *)
+        echo "[!] Unknown SUSFS_VERSION=${SUSFS_VERSION} (use v2.2 or v2.3)" >&2
+        exit 1
+        ;;
+    esac
+  fi
 fi
 KERNEL_BRANCH="${KERNEL_BRANCH}"
 KERNEL_DIR="${KERNEL_DIR:-${BUILD_ROOT}/.ci-src/android_kernel_motorola_xpeng}"
@@ -108,14 +135,98 @@ gh_env() {
   fi
 }
 
-# Build module suffix tag from enabled ENABLE_* toggles.
-# e.g. SUSFS-only -> "-SUSFS", all off -> "".
-# (Re:Kernel / BBGuard / DroidSpaces / BBRv3 toggles were removed with the
-#  module branches; keep the hook so future modules can append their tag.)
+# Build module suffix tag from the selected module.
+# e.g. SUSFS-only -> "-SUSFS", +ReKernel -> "-SUSFS-ReKernel".
+module_display_name() {
+  case "${1:-none}" in
+    rekernel)       printf '%s' "ReKernel" ;;
+    baseband-guard) printf '%s' "BBGuard" ;;
+    droidspaces)    printf '%s' "DroidSpaces" ;;
+    nomount)        printf '%s' "NoMount" ;;
+    no-kprobe)      printf '%s' "NoKprobe" ;;
+    all)            printf '%s' "AllModules" ;;
+    *)              printf '%s' "" ;;
+  esac
+}
+
+# "-SUSFSv2.3" (SUSFS only) / "-SUSFSv2.3-ReKernel" (with an adapted module)
+# The version always terminates the SUSFS part so the module suffix never gets
+# glued to it (which produced "…-ReKernelv2.3").
 build_module_tag() {
   local tag=""
-  [[ "${ENABLE_SUSFS:-true}" == "true" ]] && tag+="-SUSFS"
+  if [[ "${ENABLE_SUSFS:-true}" == "true" ]]; then
+    tag="-SUSFS${SUSFS_VERSION}"
+  fi
+  local mod="${MODULE:-none}"
+  if [[ "${mod}" == "all" ]]; then
+    tag+="-AllModules"
+  elif [[ "${mod}" != "none" && -n "${mod}" ]]; then
+    tag+="-$(module_display_name "${mod}")"
+  fi
   printf '%s' "${tag}"
+}
+
+# ---------------------------------------------------------------------------
+# apply_module_config <config-file> <module>
+#
+# Turns on the CONFIG_* symbols each adapted module needs.  Kept in the build
+# repo (not the kernel repo) so a module branch stays code-only and can be
+# built either way.
+# ---------------------------------------------------------------------------
+apply_module_config() {
+  local cfg="$1" mod="$2"
+  local kc="${KERNEL_DIR}/scripts/config"
+  local -a syms=()
+
+  en() { "${kc}" --file "${cfg}" --enable "$1" >/dev/null 2>&1 || true; }
+  st() { "${kc}" --file "${cfg}" --set-str "$1" "$2" >/dev/null 2>&1 || true; }
+
+  case "${mod}" in
+    rekernel|all)
+      en REKERNEL
+      # Re:Kernel's network-unfreeze reporting is optional; leave it off by
+      # default (upstream default n) to keep the netfilter path quiet.
+      ;;
+  esac
+
+  case "${mod}" in
+    baseband-guard|all)
+      en BBG
+      # Append baseband_guard to the LSM list (MMI baseline + ours).
+      st CONFIG_LSM "lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,baseband_guard"
+      ;;
+  esac
+
+  case "${mod}" in
+    droidspaces|all)
+      # IPC / namespaces / netfilter / tmpfs (same list the old pipeline used)
+      for s in POSIX_MQUEUE IPC_NS PID_NS DEVTMPFS \
+               NETFILTER_XT_MATCH_ADDRTYPE IP_NF_TARGET_REJECT \
+               NETFILTER_XT_TARGET_LOG NETFILTER_XT_MATCH_RECENT \
+               IP_SET IP_SET_HASH_IP IP_SET_HASH_NET NETFILTER_XT_SET \
+               TMPFS_POSIX_ACL TMPFS_XATTR; do
+        en "$s"
+      done
+      ;;
+  esac
+
+  case "${mod}" in
+    nomount|all)
+      en NOMOUNT
+      ;;
+  esac
+
+  case "${mod}" in
+    no-kprobe|all)
+      # Nothing to enable: the change is a de-staticisation in selinuxfs.c.
+      # Keep a marker so the log makes the intent obvious.
+      info "no-kprobe: selinuxfs.c de-staticised on the branch (no CONFIG needed)"
+      ;;
+  esac
+
+  if [[ "${mod}" != "none" && -n "${mod}" ]]; then
+    info "Module config injected for MODULE=${mod}"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -176,13 +287,20 @@ update_resukisu() {
 
   # SUSFS v2.3 kernel patches require ReSukiSU origin/main; SUSFS v2.2.0 needs the
   # pinned commit recorded in this fork's gitlink.  UPDATE_RESUKISU can force main
-  # explicitly; otherwise it is derived from SUSFS_VERSION.
+  # explicitly; otherwise it is derived from SUSFS_VERSION and MODULE.
+  #
+  #   no-kprobe is based on feat/susfs-v2.3  -> needs main
+  #   all-modules includes no-kprobe         -> needs main
   RE_SUKISU_PIN="${RE_SUKISU_PIN:-59c99fdf1735c37681ff18c7ffd7834741dcccbf}"
   if [[ -z "${UPDATE_RESUKISU:-}" ]]; then
-    case "${SUSFS_VERSION}" in
-      v2.3|2.3) UPDATE_RESUKISU="true" ;;
-      *)        UPDATE_RESUKISU="false" ;;
-    esac
+    if [[ "${MODULE:-none}" == "no-kprobe" || "${MODULE:-none}" == "all" ]]; then
+      UPDATE_RESUKISU="true"
+    else
+      case "${SUSFS_VERSION}" in
+        v2.3|2.3) UPDATE_RESUKISU="true" ;;
+        *)        UPDATE_RESUKISU="false" ;;
+      esac
+    fi
   fi
   if [[ "${UPDATE_RESUKISU}" == "true" ]]; then
     git -C KernelSU fetch --unshallow origin 2>/dev/null || true
@@ -438,6 +556,12 @@ build_kernel() {
   else
     "${KERNEL_DIR}/scripts/config" --file "${OUT_DIR}/.config" --disable NFC_QTI_I2C || true
   fi
+
+  # ---- Optional module CONFIG injection ------------------------------------
+  # Each module branch only carries *code*; the symbols are turned on here so
+  # the same branch can also be built with the module disabled.
+  apply_module_config "${OUT_DIR}/.config" "${MODULE:-none}"
+
   "${MAKE}" -j"${JOBS}" -C "${KERNEL_DIR}" O="${OUT_DIR}" \
     "${common_make[@]}" \
     HOSTCFLAGS="${hostcflags}" HOSTLDFLAGS="${hostldflags}" \
@@ -576,13 +700,12 @@ repack_boot() {
   cp -f new-boot.img "${WORK_DIR}/release/boot_ksu.img"
   cp -f new-boot.img "${WORK_DIR}/release/boot.img"
 
-  # boot_ksu + SUSFS version (e.g. boot_ksu-SUSFSv2.2.img), per user-approved naming.
-  # module_tag is "-SUSFS" when enabled; append the version to it so we get
-  # "-SUSFSv2.2", NOT "-SUSFS-SUSFSv2.2".  When SUSFS is off, no version suffix.
+  # build_module_tag() already yields "-SUSFSv2.3[-Module]"; just prefix boot_ksu.
+  # When SUSFS is off the tag is "-<Module>" or empty.
   local module_tag out_name
   module_tag="$(build_module_tag)"
   if [[ -n "${module_tag}" ]]; then
-    out_name="boot_ksu${module_tag}${SUSFS_VERSION}.img"
+    out_name="boot_ksu${module_tag}.img"
   else
     out_name="boot_ksu.img"
   fi
@@ -611,6 +734,7 @@ repack_boot() {
   gh_env RELEASE_NAME "${RELEASE_NAME}"
   gh_env BOOT_ARTIFACT "${BOOT_ARTIFACT}"
   gh_env SUSFS_VERSION "${SUSFS_VERSION}"
+  gh_env MODULE "${MODULE:-none}"
   gh_env KERNEL_BRANCH "${KERNEL_BRANCH}"
   gh_env VARIANT_SLUG "${VARIANT_SLUG}"
   gh_env DEVICE_TITLE "${DEVICE_TITLE}"
@@ -716,6 +840,7 @@ This replaces the kernel **and** vendor WiFi \`qca_cld3_*.ko\` (\`do.modules=1\`
 - Device: ${DEVICE_TITLE}
 - Kernel: **${KERNEL_VER_LABEL}**
 - SUSFS: **${SUSFS_VERSION}** (kernel branch \`${KERNEL_BRANCH}\`)
+- Module: **${MODULE:-none}**$([[ "${MODULE:-none}" != "none" ]] && printf ' (%s)' "$(module_display_name "${MODULE}")")
 - MYUI: 4.0
 - Android 12
 - ROM: ${ROM_ID}
