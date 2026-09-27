@@ -233,64 +233,18 @@ export KERNEL_BRANCH=5.4.302-s3rxc32.33-8-25-susfs
 | `fs/proc/fd.c` patch 不适用 | 参考内核有 `ino` 字段，MMI 无 | 去掉 ino 输出即可，保留 mnt_id 伪装 |
 | `compile.h not found`（本地单文件编译） | 未完整 `make prepare` | 本地验证可忽略，CI 全量编译会生成 |
 
-## 6. 未来升级路径（如需 SUSFS v2.3.0 / 最新 ReSukiSU）
+## 6. 关于 SUSFS v2.3 / 模块扩展
 
-1. 内核侧：用 `cctv18/susfs4oki`（v2.3.0）替换 `fs/susfs.c`、`include/linux/susfs.h`、`include/linux/susfs_def.h`；
-   **注意 AS_FLAGS 从 `inode->i_state` 变为 `inode->i_mapping->flags`**，所有 hook 文件里的
-   `set_bit/test_bit(SUSFS_*, &inode->i_state)` 都要同步改；
-   v2.3.0 新增 `fs/super.c` hook，5.4 需手动移植（无现成 5.4 补丁）。
-2. 放开 `UPDATE_RESUKISU`（改回 `github.event_name == 'schedule' || inputs.update_resukisu` 或默认 true）。
-3. 升级后务必本地先验证：`make CC=clang fs/susfs.o ...` + `drivers/kernelsu/` hook 检查。
+**结论：已全部放弃，不再尝试。**
+
+- SUSFS v2.3：曾基于 AstideLabs v2.3 补丁做过分支移植，**实测开机黑屏**，已回退。
+- 模块扩展（Re:Kernel / BBGuard / BBRv3 / DroidSpaces）：BBRv3 的无条件 TCP 改动导致卡机，已回退。
+- 相关内核分支（`feat/*`、`ci/merge-*`）**已全部删除**，内核仓库只保留唯一分支
+  `5.4.302-s3rxc32.33-8-25-susfs`。
+
+> 复现附录中的 `ld.lld undefined susfs_*_no_su` 时，直接对照「问题 #1」处理：
+> 保持 ReSukiSU 锁定在 `59c99fdf`（`UPDATE_RESUKISU=false`），不要拉到 `origin/main`。
 
 ---
 
-*文档生成时间：2026-09-23。作者：AI 助手（100% AI-generated project）。*
----
-
-# 附录 B：二次开发（2026-09-24）— 模块扩展 + 谷歌安全补丁
-
-## 新增内核分支
-`paulcbfly/android_kernel_motorola_xpeng` 分支 **`5.4.302-s3rxc32.33-8-25-modules`**
-= `5.4.302-s3rxc32.33-8-25-susfs`（SUSFS v2.2.0 基座）+ commit `8f74e34f6`：
-
-| 模块 | 来源（LuoJuly sm7325 lineage-23.2-SUSFS） | 移植方式 |
-|------|------|------|
-| **Re:Kernel** | commit b133a190c + b68efe6b2 | drivers/rekernel/ 直接拷贝最终版 + binder.c/signal.c hooks 手动移植 + drivers/Kconfig/Makefile |
-| **Baseband-guard (BBGuard)** | commit 41952b459 + 8bb2555cd | `git submodule add vc-teahouse/Baseband-guard`（pin cef0daa）+ security/baseband-guard 软链接 + security/Kconfig+Makefile |
-| **BBRv3** | commit 899d12128 | git apply 成功（tcp_bbr.c 1672 行与 lj_susfs 完全一致 + tcp.h/tcp_rate.c） |
-| **DroidSpaces** | commit 8b6309cd7 | 仅 defconfig（IPC/PID NS、DEVTMPFS、netfilter、IP_SET、TMPFS xattr/acl） |
-| **谷歌安全补丁** | lj_susfs 内 net/ 上游修复（来自 AOSP/LineageOS） | 8 个 CVE 修复全部 git apply 成功：af_packet fanout UAF、skbuff shared-frag×2、pskb_carve zerocopy、ipv6 icmp/ip6_tunnel cb[] 泄露、tipc double-free、nfc llcp UAF |
-
-## 本次坑（新增）
-1. **drivers/net/Kconfig 残留**：先应用了 b68efe6b2（netlink 版，注册 drivers/net/rekernel），
-   后应用 b133a190c（迁移到 drivers/rekernel）时旧 Kconfig 引用没删 → `olddefconfig` 报
-   `can't open file "drivers/net/rekernel/Kconfig"`。**修复**：`sed -i` 删除
-   `drivers/net/Kconfig` 的 source 行和 `drivers/net/Makefile` 的 obj 行。
-   （若直接从最终版拷贝可完全避免此问题）
-2. **rtmutex BACKPORT 补丁不适用**：lj_susfs 的 rtmutex 修复是 BACKPORT 新版 API，
-   与 5.4.302 基线上下文不符 → 跳过（稳定性修复非安全）。
-   同理由：tcp `__user` annotation 补丁因 BBRv3 已改 tcp.h 而冲突 → 跳过（编译类修复非安全）。
-3. **nfc llcp 补丁编译验证**：Edge S30 变体内核 NFC 默认关闭（`NFC_QTI_I2C` 不编），
-   `net/nfc/llcp_core.o` 无构建规则属正常，不影响补丁有效性（NFC 开启时才会编入）。
-
-## 模块可选编译机制（workflow_dispatch 输入）
-- `ENABLE_SUSFS`（默认 true；false 回退 KSU_MANUAL_HOOK）
-- `ENABLE_REKERNEL`（默认 true）
-- `ENABLE_BBGUARD`（默认 true）
-- `ENABLE_BBRV3`（默认 true；false 回退 cubic）
-- `ENABLE_DROIDSPACES`（默认 true）
-
-实现：`build_resukisu_boot.sh` 在 defconfig 生成后、olddefconfig 前用
-`scripts/config --enable/--disable/--set-str` 按环境变量调整 `.config`。
-验证过 `ENABLE_SUSFS=false + ENABLE_REKERNEL=false`：最终 .config 正确切换
-`KSU_MANUAL_HOOK=y`（含 AUTO_* 子项）、`REKERNEL` 消失。
-
-## 谷歌安全补丁完整清单
-```
-net/packet/af_packet.c  fanout UAF (NETDEV_UP race)      [CVE-2024-36971 类]
-net/core/skbuff.c       shared-frag preserve x2 + zerocopy
-net/ipv6/icmp.c         ip6_err_gen_icmpv6_unreach cb[] clear
-net/ipv6/ip6_tunnel.c   ip4ip6_err cb[] clear
-net/tipc/msg.c          tipc_buf_append double-free
-net/nfc/llcp_core.c     missing return after LLCP_CLOSED
-```
+*文档生成时间：2026-09-23，最后修订 2026-09-27。作者：AI 助手（100% AI-generated project）。*

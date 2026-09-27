@@ -6,21 +6,8 @@ on:
     - cron: "0 2 1 * *"
   workflow_dispatch:
     inputs:
-      modules:
-        description: "Modules to include, comma-separated; any combination. Empty or 'none' = SUSFS only. Valid: rekernel, bbguard, droidspaces, nomount (or 'all'). Example: rekernel,bbguard"
-        required: false
-        default: ""
-        type: string
-      susfs_version:
-        description: "SUSFS version"
-        required: true
-        default: v2.2
-        type: choice
-        options:
-          - v2.2
-          - v2.3
       update_resukisu:
-        description: "Force ReSukiSU submodule to latest main (auto: true for v2.3, false for v2.2)"
+        description: "Force ReSukiSU submodule to latest main (default: pinned SUSFS v2.2.0-compatible commit)"
         required: false
         default: false
         type: boolean
@@ -80,13 +67,8 @@ jobs:
           BUILD_WLAN: "true"
           KERNEL_VER_LABEL: "5.4.302"
           ROM_ID: S3RXC32.33-8-25
-          MODULES: ${{ inputs.modules || '' }}
-          SUSFS_VERSION: ${{ inputs.susfs_version || 'v2.2' }}
+          SUSFS_VERSION: v2.2
           UPDATE_RESUKISU: ${{ inputs.update_resukisu || '' }}
-          # PAT authorised on BOTH the build and the kernel repo; the
-          # default GITHUB_TOKEN cannot write to the kernel repo.
-          KERNEL_SYNC_TOKEN: ${{ secrets.KERNEL_SYNC_TOKEN }}
-          GH_TOKEN: ${{ secrets.KERNEL_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
           KERNEL_URL: https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild.git
           CLANG_GIT_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
           GCC_GIT_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git
@@ -122,7 +104,7 @@ jobs:
           name: ${{ env.RELEASE_NAME }}
           body_path: .ci-work/g200/release/RELEASE_NOTES.md
           files: |
-            .ci-work/g200/release/boot_ksu*.img
+            .ci-work/g200/release/boot_ksu-SUSFS${{ env.SUSFS_VERSION }}.img
             .ci-work/g200/release/Image
             .ci-work/g200/release/AnyKernel3-*.zip
             .ci-work/g200/release/wlan_crc_match*-ksu-*.zip

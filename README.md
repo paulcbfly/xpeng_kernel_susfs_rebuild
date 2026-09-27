@@ -24,7 +24,9 @@ Build scripts for Motorola **xpeng** (Moto G200 5G / Edge S30) kernel + WLAN, pl
 
 Kernel sources are **not** in this repo. They are fetched by git from `paulcbfly/android_kernel_motorola_xpeng` (branch `5.4.302-s3rxc32.33-8-25-susfs`), which carries the SUSFS integration commit on top of upstream `5.4.302-s3rxc32.33-8-25`.
 
-> ⚠️ **回退记录 (2026-09-24)**: Re:Kernel / BBGuard / BBRv3 / DroidSpaces 模块分支因 BBRv3 无条件 TCP 改动导致卡机已全部回退。当前仅为**稳定的纯 SUSFS 版本**，与首个可用 Release (r2) 一致。模块开发请从 `5.4.302-s3rxc32.33-8-25-susfs` 分支重新开始，逐个模块验证后再合入。
+> ⚠️ **回退记录 (2026-09-24 / 2026-09-27)**: Re:Kernel / BBGuard / BBRv3 / DroidSpaces 模块分支已全部回退，
+> **SUSFS v2.3 亦已放弃**（实测黑屏）。当前仅为**稳定的纯 SUSFS v2.2 版本**，内核仓库仅保留单一分支
+> `5.4.302-s3rxc32.33-8-25-susfs`。如需再开发模块，请从该分支重新开始并逐个验证。
 
 ## Artifact naming
 

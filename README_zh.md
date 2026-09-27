@@ -21,7 +21,8 @@
 |------|------|
 | **SUSFS** | Secure User File System（SUS_PATH / SUS_MOUNT / SUS_KSTAT / SPOOF_UNAME / OPEN_REDIRECT / SUS_MAP 等全特性） |
 
-> ⚠️ **回退记录 (2026-09-24)**: Re:Kernel / BBGuard / BBRv3 / DroidSpaces 模块分支因 BBRv3 无条件 TCP 改动导致卡机已全部回退。当前为**稳定的纯 SUSFS 版本**。
+> ⚠️ **回退记录 (2026-09-24 / 2026-09-27)**: Re:Kernel / BBGuard / BBRv3 / DroidSpaces 模块分支已全部回退，
+> **SUSFS v2.3 亦已放弃**（实测黑屏）。当前为**稳定的纯 SUSFS v2.2 版本**，仅保留单一内核分支。
 
 ---
 
@@ -29,12 +30,12 @@
 
 | 仓库 | 角色 | 分支 |
 |------|------|------|
-| **paulcbfly/xpeng_kernel_susfs**（本仓库） | 编译脚本 + GitHub Actions workflow | `5.4.302-s3rxc32.33-8-25-ReSukiSU` |
-| **paulcbfly/android_kernel_motorola_xpeng** | 内核源码（fork 自 LuoJuly）+ 全部适配 commit | `5.4.302-s3rxc32.33-8-25-modules` |
+| **paulcbfly/xpeng_kernel_susfs_rebuild**（本仓库） | 编译脚本 + GitHub Actions workflow | `5.4.302-s3rxc32.33-8-25-ReSukiSU` |
+| **paulcbfly/android_kernel_motorola_xpeng_rebuild** | 内核源码（fork 自 LuoJuly）+ SUSFS 适配 | `5.4.302-s3rxc32.33-8-25-susfs` |
 
 - 编译仓库**不包含内核源码**，Actions 运行时自动 `git clone` 内核仓库指定分支。
-- 内核分支 `5.4.302-s3rxc32.33-8-25-modules` = 上游 8-25 + SUSFS 适配（b3ecce7eb）+ 模块扩展（8f74e34f6）。
-- 子模块：`KernelSU`→ReSukiSU @ `59c99fdf`（固定，SUSFS v2.2.0 兼容）、`Baseband-guard`→vc-teahouse @ `cef0daa`。
+- 内核仓库**只保留唯一分支** `5.4.302-s3rxc32.33-8-25-susfs`（上游 8-25 + SUSFS v2.2 适配）。
+- 子模块：`KernelSU`→ReSukiSU @ `59c99fdf`（固定，SUSFS v2.2.0 兼容）。
 
 ---
 
@@ -98,9 +99,9 @@ gh run list --workflow build-resukisu-edge-s30.yml --limit 3
 
 ## 📚 相关文档
 
-- [`docs/AI_HANDOVER_zh.md`](docs/AI_HANDOVER_zh.md) — **AI 交接文档（中文）**：全部编译问题、解决方案、验证方法、升级路径
+- [`docs/AI_HANDOVER_zh.md`](docs/AI_HANDOVER_zh.md) — **AI 交接文档（中文）**：全部编译问题、解决方案、验证方法
 - [`docs/AI_HANDOVER.md`](docs/AI_HANDOVER.md) — AI 交接文档（英文版）
-- [内核 fork `5.4.302-s3rxc32.33-8-25-modules` 分支](https://github.com/paulcbfly/android_kernel_motorola_xpeng/tree/5.4.302-s3rxc32.33-8-25-modules)
+- [内核仓库 `5.4.302-s3rxc32.33-8-25-susfs` 分支](https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild/tree/5.4.302-s3rxc32.33-8-25-susfs)
 
 ---
 

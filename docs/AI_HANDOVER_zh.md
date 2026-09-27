@@ -136,21 +136,6 @@ make O=/tmp/kout ARCH=arm64 CC=clang fs/susfs.o fs/exec.o fs/namei.o \
 
 ---
 
-### 问题 #6（二次开发新增）：drivers/net/Kconfig 残留引用
-
-先应用了 Re:Kernel netlink 版（注册 `drivers/net/rekernel`），后应用迁移版（移到 `drivers/rekernel`）
-时旧 Kconfig 引用未删 → `olddefconfig` 报 `can't open file "drivers/net/rekernel/Kconfig"`。
-**修复**：删除 `drivers/net/Kconfig` 的 `source "drivers/net/rekernel/Kconfig"` 行和
-`drivers/net/Makefile` 的 `obj-$(CONFIG_REKERNEL)` 行。
-**教训**：若直接从 lj_susfs 拷贝最终文件（drivers/rekernel/ 最终版），可完全避免此问题。
-
-### 问题 #7（跳过项）：rtmutex / tcp __user 补丁不适用
-
-- lj_susfs 的 rtmutex 修复是 BACKPORT 新版 API，与 5.4.302 基线上下文不符 → 跳过（稳定性修复，非安全）。
-- tcp `__user` annotation 因 BBRv3 已改 tcp.h 冲突 → 跳过（编译类修复，非安全）。
-
----
-
 ## 3. GitHub Actions 编译流程
 
 ### 触发方式
@@ -182,23 +167,17 @@ AnyKernel3-xpeng-EdgeS30-ReSukiSU-5.4.302-v4.1.0-1332-g59c99fdf-S3RXC32.33-8-25.
 boot_ksu.img   # fastboot: fastboot flash boot boot_ksu.img
 ```
 
-## 4. 模块开关实现细节
+## 4. 配置开关（仅 SUSFS）
 
 `build_kernel()` 中，在 `make vendor/lahaina-qgki_defconfig` 之后、`olddefconfig` 之前：
 
 ```bash
-sha="${KERNEL_DIR}/scripts/config"   # config 工具
-"$sha" --file "${OUT_DIR}/.config" --enable/--disable/--set-str <CONFIG> ...
+"${KERNEL_DIR}/scripts/config" --file "${OUT_DIR}/.config" --enable/--disable/--set-str <CONFIG> ...
 ```
 
-- `ENABLE_SUSFS=false` → `--disable KSU_SUSFS` + `--enable KSU_MANUAL_HOOK`（含 AUTO_* 子项靠 olddefconfig 自动补齐）
-- `ENABLE_REKERNEL=false` → `--disable REKERNEL`
-- `ENABLE_BBGUARD=false` → `--disable BBG`
-- `ENABLE_BBRV3=false` → `--disable TCP_CONG_BBR DEFAULT_BBR` + `--set-str DEFAULT_TCP_CONG cubic`
-- `ENABLE_DROIDSPACES=false` → `--disable POSIX_MQUEUE IPC_NS PID_NS DEVTMPFS`
+- `ENABLE_SUSFS=false` → `--disable KSU_SFS` + `--enable KSU_MANUAL_HOOK`（AUTO_* 子项由 olddefconfig 补齐）
 
-**已验证**：`ENABLE_SUSFS=false + ENABLE_REKERNEL=false` 时，最终 .config 正确切换
-`KSU_MANUAL_HOOK=y`（含 AUTO_*）、`REKERNEL` 消失。
+> 模块开关（Re:Kernel / BBGuard / BBRv3 / DroidSpaces）**已全部移除**，不再存在。
 
 ## 5. 本地复现构建（可选）
 
@@ -206,8 +185,8 @@ sha="${KERNEL_DIR}/scripts/config"   # config 工具
 export VARIANT=edge-s30     # 或 g200（ENABLE_NFC=true）
 export ENABLE_NFC=false
 export UPDATE_RESUKISU=false
-export KERNEL_URL=https://github.com/paulcbfly/android_kernel_motorola_xpeng.git
-export KERNEL_BRANCH=5.4.302-s3rxc32.33-8-25-modules
+export KERNEL_URL=https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild.git
+export KERNEL_BRANCH=5.4.302-s3rxc32.33-8-25-susfs
 ./scripts/ci/build_resukisu_boot.sh
 # 产物：.ci-work/edge-s30/release/
 ```
@@ -225,13 +204,17 @@ export KERNEL_BRANCH=5.4.302-s3rxc32.33-8-25-modules
 | `fs/proc/fd.c` patch 不适用 | 参考内核有 ino，MMI 无 | 去掉 ino 输出 |
 | `compile.h not found`（本地单文件） | 未完整 prepare | 本地验证可忽略，CI 全量编译会生成 |
 
-## 7. 未来升级路径（如需 SUSFS v2.3.0 / 最新 ReSukiSU）
+## 7. 关于 SUSFS v2.3 / 模块扩展
 
-1. 内核侧：用 `cctv18/susfs4oki`（v2.3.0）替换 `fs/susfs.c`、`include/linux/susfs.h`、`include/linux/susfs_def.h`；
-   **注意 AS_FLAGS 从 `inode->i_state` → `inode->i_mapping->flags`**，所有 hook 文件里的 set_bit/test_bit 都要同步改；
-   v2.3.0 新增 `fs/super.c` hook，5.4 需手动移植（无现成 5.4 补丁）。
-2. 放开 `UPDATE_RESUKISU`（改回 schedule 强制或默认 true）。
-3. 升级后本地先验证：`make CC=clang fs/susfs.o ...` + `drivers/kernelsu/` hook 检查。
+**结论：已全部放弃，不再尝试。**
+
+- SUSFS v2.3：曾基于 AstideLabs v2.3 补丁做过分支移植，**实测开机黑屏**，已回退。
+- 模块扩展（Re:Kernel / BBGuard / BBRv3 / DroidSpaces）：BBRv3 的无条件 TCP 改动导致卡机，已回退。
+- 相关内核分支（`feat/*`、`ci/merge-*`）**已全部删除**，内核仓库只保留唯一分支
+  `5.4.302-s3rxc32.33-8-25-susfs`。
+
+> 再次出现 `ld.lld undefined susfs_*_no_su` 时，直接对照「问题 #1」处理：
+> 保持 ReSukiSU 锁定 `59c99fdf`（`UPDATE_RESUKISU=false`），不要拉到 `origin/main`。
 
 ## 8. 本次合入的谷歌安全补丁清单
 
@@ -246,4 +229,4 @@ export KERNEL_BRANCH=5.4.302-s3rxc32.33-8-25-modules
 
 ---
 
-*文档生成时间：2026-09-24。作者：AI 助手（100% AI-generated project）。*
+*文档生成时间：2026-09-24，最后修订 2026-09-27。作者：AI 助手（100% AI-generated project）。*
