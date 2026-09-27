@@ -850,7 +850,7 @@ This replaces the kernel **and** vendor WiFi \`qca_cld3_*.ko\` (\`do.modules=1\`
 - AnyKernel3: [osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3) \`${AK3_COMMIT}\` (\`do.modules=1\`, pushes kos to \`/vendor/lib/modules/\`)
 
 ## Assets
-- \`boot_ksu-SUSFS${SUSFS_VERSION}.img\` — OEM boot.img with replaced ReSukiSU kernel
+- \`boot_ksu$(build_module_tag).img\` — OEM boot.img with replaced ReSukiSU kernel
 - \`Image\` — raw ARM64 kernel Image
 - \`AnyKernel3-*.zip\` — flashable zip (kernel + vendor WiFi kos; no KernelSU WiFi module needed)
 - \`wlan_crc_match_*-ksu-*.zip\` — optional KernelSU/Magisk overlay **only if** you flash \`boot_ksu.img\` via fastboot (does not replace vendor kos)
