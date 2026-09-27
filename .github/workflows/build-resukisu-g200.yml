@@ -6,21 +6,13 @@ on:
     - cron: "0 2 1 * *"
   workflow_dispatch:
     inputs:
-      module:
-        description: "Optional module branch to build (none = SUSFS-only). 'all' compiles every module at once."
-        required: true
-        default: none
-        type: choice
-        options:
-          - none
-          - rekernel
-          - baseband-guard
-          - droidspaces
-          - nomount
-          - no-kprobe
-          - all
+      modules:
+        description: "Modules to include, comma-separated; any combination. Empty or 'none' = SUSFS only. Valid: rekernel, bbguard, droidspaces, nomount (or 'all'). Example: rekernel,bbguard"
+        required: false
+        default: ""
+        type: string
       susfs_version:
-        description: "SUSFS version (ignored when module != none; no-kprobe implies v2.3)"
+        description: "SUSFS version"
         required: true
         default: v2.2
         type: choice
@@ -88,9 +80,10 @@ jobs:
           BUILD_WLAN: "true"
           KERNEL_VER_LABEL: "5.4.302"
           ROM_ID: S3RXC32.33-8-25
-          MODULE: ${{ inputs.module || 'none' }}
+          MODULES: ${{ inputs.modules || '' }}
           SUSFS_VERSION: ${{ inputs.susfs_version || 'v2.2' }}
           UPDATE_RESUKISU: ${{ inputs.update_resukisu || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KERNEL_URL: https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild.git
           CLANG_GIT_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
           GCC_GIT_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git

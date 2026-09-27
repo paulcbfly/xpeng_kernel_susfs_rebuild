@@ -52,41 +52,93 @@ KERNEL_URL="${KERNEL_URL:-https://github.com/paulcbfly/android_kernel_motorola_x
 #   SUSFS_VERSION  v2.2 (default) -> pure r7 baseline, mobile data verified OK
 #                  v2.3            -> r7 baseline + AstideLabs SUSFS v2.3 fs/
 #
-#   MODULE         (optional, default "none") selects one adapted module branch.
-#                  Each module lives on its own branch, all based on the r7
-#                  baseline EXCEPT no-kprobe which needs SUSFS v2.3.
-#                  none | rekernel | baseband-guard | droidspaces | nomount |
-#                  no-kprobe | all
-#                  "all" is the combined branch used to compile-test every
-#                  module at once.
+#   MODULES        comma-separated list of adapted modules to enable, any
+#                  combination.  Empty / "none" = SUSFS-only.
+#
+#                    rekernel        Re:Kernel (full, binder hook)
+#                    bbguard         Baseband-guard LSM   (alias: baseband-guard)
+#                    droidspaces     DroidSpaces
+#                    nomount         NoMount
+#
+#                  Each lives on its own branch (feat/<name>), all based on the
+#                  SUSFS branch selected above.  When more than one module is
+#                  requested the tree is merged on the fly in CI (see
+#                  resolve_kernel_tree) -- no per-combination branch is needed.
+#
+#                  "all" is a shorthand for every module.
 #
 # An explicit KERNEL_BRANCH always wins (handy for testing ad-hoc branches).
 SUSFS_VERSION="${SUSFS_VERSION:-v2.2}"
-MODULE="${MODULE:-none}"
+MODULES="${MODULES:-${MODULE:-none}}"
+
+# Canonical module list + display names.
+MODULE_KEYS=()          # e.g. (rekernel bbguard)
+MODULE_BRANCHES=()      # e.g. (feat/rekernel feat/baseband-guard)
+
+module_normalise() {
+  case "${1,,}" in
+    ""|none)                 printf '%s' "" ;;
+    rekernel)                printf '%s' "rekernel" ;;
+    bbguard|baseband-guard|baseband_guard) printf '%s' "bbguard" ;;
+    droidspaces)             printf '%s' "droidspaces" ;;
+    nomount)                 printf '%s' "nomount" ;;
+    *)                       printf '%s' "__BAD__:%s" "$1" ;;
+  esac
+}
+
+module_branch_of() {
+  case "$1" in
+    rekernel)    printf '%s' "feat/rekernel" ;;
+    bbguard)     printf '%s' "feat/baseband-guard" ;;
+    droidspaces) printf '%s' "feat/droidspaces" ;;
+    nomount)     printf '%s' "feat/nomount" ;;
+  esac
+}
+
+# Parse MODULES (comma or space separated, case-insensitive) into the arrays.
+parse_modules() {
+  local raw="${1//,/ }" tok norm
+  local -a seen=()
+  for tok in ${raw}; do
+    norm="$(module_normalise "${tok}")"
+    if [[ "${norm}" == __BAD__:* ]]; then
+      die "Unknown module '${tok#__BAD__:}'. Valid: rekernel, bbguard, droidspaces, nomount (or 'all', 'none')"
+    fi
+    [[ -z "${norm}" ]] && continue
+    local dup=0 x
+    for x in "${seen[@]:-}"; do [[ "${x}" == "${norm}" ]] && dup=1; done
+    [[ "${dup}" == "1" ]] && continue
+    seen+=("${norm}")
+    MODULE_KEYS+=("${norm}")
+    MODULE_BRANCHES+=("$(module_branch_of "${norm}")")
+  done
+}
+
+# "all" is shorthand for every module.
+if [[ "${MODULES,,}" == "all" ]]; then
+  MODULES="rekernel,bbguard,droidspaces,nomount"
+fi
+parse_modules "${MODULES}"
+
+# SUSFS branch: modules may ride either SUSFS line.
+case "${SUSFS_VERSION}" in
+  v2.2|2.2)   SUSFS_BRANCH="5.4.302-s3rxc32.33-8-25-susfs" ;;
+  v2.3|2.3)   SUSFS_BRANCH="feat/susfs-v2.3" ;;
+  *)
+    echo "[!] Unknown SUSFS_VERSION=${SUSFS_VERSION} (use v2.2 or v2.3)" >&2
+    exit 1
+    ;;
+esac
+
+# Resolved later by resolve_kernel_tree(): single module -> its own branch,
+# several modules -> a freshly-merged throwaway branch.
 if [[ -z "${KERNEL_BRANCH:-}" ]]; then
-  if [[ "${MODULE}" != "none" ]]; then
-    case "${MODULE}" in
-      rekernel)        KERNEL_BRANCH="feat/rekernel" ;;
-      baseband-guard)  KERNEL_BRANCH="feat/baseband-guard" ;;
-      droidspaces)     KERNEL_BRANCH="feat/droidspaces" ;;
-      nomount)         KERNEL_BRANCH="feat/nomount" ;;
-      no-kprobe)       KERNEL_BRANCH="feat/no-kprobe" ;;
-      all)             KERNEL_BRANCH="feat/all-modules" ;;
-      *)
-        echo "[!] Unknown MODULE=${MODULE}" >&2
-        echo "    use: none|rekernel|baseband-guard|droidspaces|nomount|no-kprobe|all" >&2
-        exit 1
-        ;;
-    esac
+  if [[ "${#MODULE_KEYS[@]}" -eq 0 ]]; then
+    KERNEL_BRANCH="${SUSFS_BRANCH}"
+  elif [[ "${#MODULE_KEYS[@]}" -eq 1 ]]; then
+    KERNEL_BRANCH="${MODULE_BRANCHES[0]}"
   else
-    case "${SUSFS_VERSION}" in
-      v2.2|2.2)   KERNEL_BRANCH="5.4.302-s3rxc32.33-8-25-susfs" ;;
-      v2.3|2.3)   KERNEL_BRANCH="feat/susfs-v2.3" ;;
-      *)
-        echo "[!] Unknown SUSFS_VERSION=${SUSFS_VERSION} (use v2.2 or v2.3)" >&2
-        exit 1
-        ;;
-    esac
+    KERNEL_BRANCH=""          # decided after the merge
   fi
 fi
 KERNEL_BRANCH="${KERNEL_BRANCH}"
@@ -135,98 +187,341 @@ gh_env() {
   fi
 }
 
-# Build module suffix tag from the selected module.
-# e.g. SUSFS-only -> "-SUSFS", +ReKernel -> "-SUSFS-ReKernel".
+# Human-readable name for a canonical module key.
 module_display_name() {
-  case "${1:-none}" in
-    rekernel)       printf '%s' "ReKernel" ;;
-    baseband-guard) printf '%s' "BBGuard" ;;
-    droidspaces)    printf '%s' "DroidSpaces" ;;
-    nomount)        printf '%s' "NoMount" ;;
-    no-kprobe)      printf '%s' "NoKprobe" ;;
-    all)            printf '%s' "AllModules" ;;
-    *)              printf '%s' "" ;;
+  case "${1:-}" in
+    rekernel)    printf '%s' "ReKernel" ;;
+    bbguard)     printf '%s' "BBGuard" ;;
+    droidspaces) printf '%s' "DroidSpaces" ;;
+    nomount)     printf '%s' "NoMount" ;;
+    *)           printf '%s' "" ;;
   esac
 }
 
-# "-SUSFSv2.3" (SUSFS only) / "-SUSFSv2.3-ReKernel" (with an adapted module)
+# "-SUSFSv2.3" (SUSFS only) / "-SUSFSv2.3-ReKernel-BBGuard" (any combination).
 # The version always terminates the SUSFS part so the module suffix never gets
-# glued to it (which produced "…-ReKernelv2.3").
+# glued to it (which produced "…-ReKernelv2.3").  Module names appear in the
+# order the user selected them.
 build_module_tag() {
   local tag=""
   if [[ "${ENABLE_SUSFS:-true}" == "true" ]]; then
     tag="-SUSFS${SUSFS_VERSION}"
   fi
-  local mod="${MODULE:-none}"
-  if [[ "${mod}" == "all" ]]; then
-    tag+="-AllModules"
-  elif [[ "${mod}" != "none" && -n "${mod}" ]]; then
-    tag+="-$(module_display_name "${mod}")"
-  fi
+  local k
+  for k in "${MODULE_KEYS[@]:-}"; do
+    [[ -z "${k}" ]] && continue
+    tag+="-$(module_display_name "${k}")"
+  done
   printf '%s' "${tag}"
 }
 
+# "none" / "ReKernel+BBGuard" — for release notes.
+module_list_display() {
+  if [[ "${#MODULE_KEYS[@]}" -eq 0 ]]; then
+    printf '%s' "none (SUSFS only)"
+    return
+  fi
+  local -a names=()
+  local k
+  for k in "${MODULE_KEYS[@]}"; do
+    names+=("$(module_display_name "${k}")")
+  done
+  local IFS='+'
+  printf '%s' "${names[*]}"
+}
+
+# Comma-separated canonical keys, for $GITHUB_ENV / release notes.
+module_list_csv() {
+  if [[ "${#MODULE_KEYS[@]}" -eq 0 ]]; then
+    printf '%s' "none"
+    return
+  fi
+  local IFS=','
+  printf '%s' "${MODULE_KEYS[*]}"
+}
+
+# Legacy single-token alias kept for the build script's own log lines.
+module_display_key() { module_list_display; }
+
+# Markdown table of every adapted module with a supported / not-supported mark
+# for THIS build.  Feeds the GitHub Release body.
+module_feature_table() {
+  local k has
+  printf '| Feature | In this build | Notes |\n'
+  printf '| --- | :---: | --- |\n'
+
+  row() {  # row <key> <note>
+    has=0
+    for k in "${MODULE_KEYS[@]:-}"; do
+      [[ "${k}" == "$1" ]] && has=1
+    done
+    if [[ "${has}" == "1" ]]; then
+      printf '| %s | ✅ supported | %s |\n' "$(module_display_name "$1")" "$2"
+    else
+      printf '| %s | ❌ not included | %s |\n' "$(module_display_name "$1")" "$2"
+    fi
+  }
+
+  row rekernel    'Re:Kernel full (binder + signal hooks), \`CONFIG_REKERNEL=y\`'
+  row bbguard     'Baseband-guard LSM, \`CONFIG_BBG=y\`, appended to \`CONFIG_LSM\`'
+  row droidspaces 'IPC namespaces / netfilter / tmpfs symbol set'
+  row nomount     'NoMount submodule, \`CONFIG_NOMOUNT=y\`'
+  printf '| SUSFS %s | ✅ supported | KernelSU SUSFS patches, \`CONFIG_KSU_SUSFS=y\` |\n' "${SUSFS_VERSION}"
+}
+
 # ---------------------------------------------------------------------------
-# apply_module_config <config-file> <module>
+# apply_module_config <config-file>
 #
-# Turns on the CONFIG_* symbols each adapted module needs.  Kept in the build
+# Turns on the CONFIG_* symbols for every selected module.  Kept in the build
 # repo (not the kernel repo) so a module branch stays code-only and can be
-# built either way.
+# built in any combination.
 # ---------------------------------------------------------------------------
 apply_module_config() {
-  local cfg="$1" mod="$2"
+  local cfg="$1"
   local kc="${KERNEL_DIR}/scripts/config"
-  local -a syms=()
 
   en() { "${kc}" --file "${cfg}" --enable "$1" >/dev/null 2>&1 || true; }
   st() { "${kc}" --file "${cfg}" --set-str "$1" "$2" >/dev/null 2>&1 || true; }
 
-  case "${mod}" in
-    rekernel|all)
-      en REKERNEL
-      # Re:Kernel's network-unfreeze reporting is optional; leave it off by
-      # default (upstream default n) to keep the netfilter path quiet.
-      ;;
-  esac
+  local k
+  for k in "${MODULE_KEYS[@]:-}"; do
+    [[ -z "${k}" ]] && continue
+    case "${k}" in
+      rekernel)
+        en REKERNEL
+        # Re:Kernel's network-unfreeze reporting is optional; leave it off by
+        # default (upstream default n) to keep the netfilter path quiet.
+        ;;
+      bbguard)
+        en BBG
+        # Append baseband_guard to the LSM list (MMI baseline + ours).
+        st CONFIG_LSM "lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,baseband_guard"
+        ;;
+      droidspaces)
+        # IPC / namespaces / netfilter / tmpfs (same list the old pipeline used)
+        for s in POSIX_MQUEUE IPC_NS PID_NS DEVTMPFS \
+                 NETFILTER_XT_MATCH_ADDRTYPE IP_NF_TARGET_REJECT \
+                 NETFILTER_XT_TARGET_LOG NETFILTER_XT_MATCH_RECENT \
+                 IP_SET IP_SET_HASH_IP IP_SET_HASH_NET NETFILTER_XT_SET \
+                 TMPFS_POSIX_ACL TMPFS_XATTR; do
+          en "$s"
+        done
+        ;;
+      nomount)
+        en NOMOUNT
+        ;;
+    esac
+  done
 
-  case "${mod}" in
-    baseband-guard|all)
-      en BBG
-      # Append baseband_guard to the LSM list (MMI baseline + ours).
-      st CONFIG_LSM "lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,baseband_guard"
-      ;;
-  esac
-
-  case "${mod}" in
-    droidspaces|all)
-      # IPC / namespaces / netfilter / tmpfs (same list the old pipeline used)
-      for s in POSIX_MQUEUE IPC_NS PID_NS DEVTMPFS \
-               NETFILTER_XT_MATCH_ADDRTYPE IP_NF_TARGET_REJECT \
-               NETFILTER_XT_TARGET_LOG NETFILTER_XT_MATCH_RECENT \
-               IP_SET IP_SET_HASH_IP IP_SET_HASH_NET NETFILTER_XT_SET \
-               TMPFS_POSIX_ACL TMPFS_XATTR; do
-        en "$s"
-      done
-      ;;
-  esac
-
-  case "${mod}" in
-    nomount|all)
-      en NOMOUNT
-      ;;
-  esac
-
-  case "${mod}" in
-    no-kprobe|all)
-      # Nothing to enable: the change is a de-staticisation in selinuxfs.c.
-      # Keep a marker so the log makes the intent obvious.
-      info "no-kprobe: selinuxfs.c de-staticised on the branch (no CONFIG needed)"
-      ;;
-  esac
-
-  if [[ "${mod}" != "none" && -n "${mod}" ]]; then
-    info "Module config injected for MODULE=${mod}"
+  if [[ "${#MODULE_KEYS[@]}" -gt 0 ]]; then
+    info "Module config injected for MODULES=$(module_list_csv)"
+  else
+    info "Module config: none selected (SUSFS-only build)"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# resolve_kernel_tree
+#
+# With 0 or 1 module the kernel branch is known up front.  With 2+ modules
+# there is no pre-built branch for that combination, so merge the selected
+# module trees on top of the SUSFS baseline right here and return a temporary
+# branch.  Files and .gitmodules stanzas are unioned; later modules win for a
+# path they share.
+# ---------------------------------------------------------------------------
+KERNEL_TREE_TMP_BRANCH=""
+
+resolve_kernel_tree() {
+  [[ "${#MODULE_KEYS[@]}" -le 1 ]] && return 0
+  [[ -n "${KERNEL_BRANCH}" ]] && return 0        # explicit override wins
+
+  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [[ -z "${token}" ]]; then
+    die "Cannot merge modules without a GitHub token (set GH_TOKEN)"
+  fi
+  command -v python3 >/dev/null || die "python3 is required to merge module branches"
+
+  log "Merge selected module branches (${MODULES:-all})"
+  local tmpscript
+  tmpscript="$(mktemp "${WORK_DIR}/merge-XXXXXX.py")"
+  cat > "${tmpscript}" <<'PYEOF'
+import base64, json, os, re, sys, urllib.error, urllib.request
+
+TOKEN = os.environ["GH_TOKEN_MERGE"]
+API   = "https://api.github.com"
+BRANCHES = os.environ["MERGE_BRANCHES"].split()      # e.g. feat/rekernel feat/nomount
+BASE     = os.environ["MERGE_BASE"]                  # e.g. feat/susfs-v2.3
+NO_PUSH  = os.environ.get("MERGE_LOCAL") == "1"      # local trees only
+OUT_DIR  = os.environ.get("MERGE_LOCAL_DIR", "")     # where to write files when local
+REPO     = os.environ["MERGE_REPO"]                  # owner/name
+
+def call(method, path, body=None):
+    url = path if path.startswith("http") else API + path
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", "token " + TOKEN)
+    req.add_header("Accept", "application/vnd.github+json")
+    if data:
+        req.add_header("Content-Type", "application/json")
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                return json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503) and attempt < 3:
+                import time; time.sleep(3 * (attempt + 1)); continue
+            raise RuntimeError(f"HTTP {e.code} {method} {path}: {e.read().decode()[:300]}")
+
+def entries(ref):
+    d = call("GET", f"/repos/{REPO}/git/trees/{ref}?recursive=1")
+    if d.get("truncated"):
+        raise RuntimeError("tree truncated; cannot merge safely")
+    return {x["path"]: x for x in d["tree"]}
+
+def blob_bytes(sha):
+    return base64.b64decode(call("GET", f"/repos/{REPO}/git/blobs/{sha}")["content"])
+
+def put_bytes(b):
+    return call("POST", f"/repos/{REPO}/git/blobs",
+                {"content": base64.b64encode(b).decode(), "encoding": "base64"})["sha"]
+
+base_commit = call("GET", f"/repos/{REPO}/git/ref/heads/{BASE}")["object"]["sha"]
+base_entries = entries(base_commit)
+print(f"base {BASE} {base_commit[:12]} ({len(base_entries)} entries)")
+
+merged = {}
+for b in BRANCHES:
+    c = call("GET", f"/repos/{REPO}/git/ref/heads/{b}")["object"]["sha"]
+    e = entries(c)
+    changed = {p: x for p, x in e.items()
+               if p not in base_entries or x["sha"] != base_entries[p]["sha"]}
+    print(f"  {b:26s} {len(changed):4d} changed paths  ({c[:12]})")
+    merged.update(changed)
+
+# directories must not be listed explicitly
+merged = {p: x for p, x in merged.items() if x["type"] in ("blob", "commit")}
+
+# .gitmodules = union of every side
+gm = {}
+order = []
+def stanzas(text):
+    for m in re.finditer(r"\[submodule \"([^\"]+)\"\]\n((?:\t[^\n]*\n)*)", text):
+        n = m.group(1)
+        if n not in gm:
+            order.append(n)
+        gm[n] = m.group(0)
+
+if ".gitmodules" in base_entries:
+    stanzas(blob_bytes(base_entries[".gitmodules"]["sha"]).decode())
+for b in BRANCHES:
+    e = entries(call("GET", f"/repos/{REPO}/git/ref/heads/{b}")["object"]["sha"])
+    if ".gitmodules" in e:
+        stanzas(blob_bytes(e[".gitmodules"]["sha"]).decode())
+if gm:
+    text = "\n".join(gm[n] for n in order)
+    if not text.endswith("\n"):
+        text += "\n"
+    merged[".gitmodules"] = {"path": ".gitmodules", "mode": "100644",
+                             "type": "blob", "sha": put_bytes(text.encode())}
+    print("  .gitmodules stanzas:", ", ".join(order))
+
+print(f"  merged path set: {len(merged)}")
+
+if NO_PUSH:
+    # write the merged files into a local kernel clone already checked out at BASE
+    for p, x in merged.items():
+        dst = os.path.join(OUT_DIR, p)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if x["type"] == "blob":
+            with open(dst, "wb") as f:
+                f.write(blob_bytes(x["sha"]))
+        else:
+            print(f"  NOTE gitlink {p} -> {x['sha']} (checkout must init submodules)")
+    with open(os.path.join(OUT_DIR, ".merge-manifest"), "w") as f:
+        for p in sorted(merged):
+            f.write(p + "\n")
+    print("LOCAL_MERGE_OK")
+    sys.exit(0)
+
+tree = call("POST", f"/repos/{REPO}/git/trees",
+            {"base_tree": call("GET", f"/repos/{REPO}/git/commits/{base_commit}")["tree"]["sha"],
+             "tree": [{"path": p, "mode": x["mode"], "type": x["type"], "sha": x["sha"]}
+                      for p, x in merged.items()]})
+msg = ("ci: merge selected modules for one build\n\n"
+       "Modules: " + ", ".join(BRANCHES) + "\n"
+       "Generated automatically by build_resukisu_boot.sh; safe to delete.\n")
+commit = call("POST", f"/repos/{REPO}/git/commits",
+              {"message": msg, "tree": tree["sha"], "parents": [base_commit]})
+print("COMMIT=" + commit["sha"])
+PYEOF
+
+  local csv
+  csv="$(module_list_csv)"
+  local merge_branch="ci/merge-${csv//,/-}-$(date -u +%Y%m%d%H%M%S)"
+  export GH_TOKEN_MERGE="${token}"
+  export MERGE_REPO="${KERNEL_REPO_SLUG:-paulcbfly/android_kernel_motorola_xpeng_rebuild}"
+  export MERGE_BASE="${SUSFS_BRANCH}"
+  export MERGE_BRANCHES="${MODULE_BRANCHES[*]}"
+  local out
+  if ! out="$(python3 "${tmpscript}")"; then
+    echo "${out}"
+    die "Module merge failed"
+  fi
+  echo "${out}"
+  local commit
+  commit="$(printf '%s\n' "${out}" | sed -n 's/^COMMIT=//p' | tail -n1)"
+  [[ -n "${commit}" ]] || die "Module merge produced no commit"
+  rm -f "${tmpscript}"
+
+  # publish the merged commit as a throwaway branch so fetch_kernel can clone it
+  python3 - "$commit" "$merge_branch" <<'PYEOF'
+import json, os, sys, urllib.request
+token, repo = os.environ["GH_TOKEN_MERGE"], os.environ["MERGE_REPO"]
+sha, ref = sys.argv[1], sys.argv[2]
+req = urllib.request.Request(
+    f"https://api.github.com/repos/{repo}/git/refs",
+    data=json.dumps({"ref": f"refs/heads/{ref}", "sha": sha}).encode(),
+    method="POST")
+req.add_header("Authorization", "token " + token)
+req.add_header("Accept", "application/vnd.github+json")
+req.add_header("Content-Type", "application/json")
+try:
+    with urllib.request.urlopen(req, timeout=120) as r:
+        print("created", ref)
+except urllib.error.HTTPError as e:
+    print(f"HTTP {e.code}: {e.read().decode()[:200]}")
+    sys.exit(1)
+PYEOF
+
+  KERNEL_BRANCH="${merge_branch}"
+  KERNEL_TREE_TMP_BRANCH="${merge_branch}"
+  info "Merged modules -> kernel branch ${KERNEL_BRANCH} (commit ${commit:0:12})"
+  gh_env KERNEL_BRANCH "${KERNEL_BRANCH}"
+  gh_env MERGED_BRANCH "${KERNEL_BRANCH}"
+  endlog
+}
+
+# Delete the throwaway merge branch once the build is done.
+cleanup_kernel_tree() {
+  [[ -z "${KERNEL_TREE_TMP_BRANCH}" ]] && return 0
+  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  [[ -z "${token}" ]] && return 0
+  log "Clean up temporary merge branch"
+  python3 - "${KERNEL_TREE_TMP_BRANCH}" <<'PYEOF'
+import os, sys, urllib.request, urllib.error
+token, repo = os.environ["GH_TOKEN_MERGE"], os.environ["MERGE_REPO"]
+ref = sys.argv[1]
+req = urllib.request.Request(
+    f"https://api.github.com/repos/{repo}/git/refs/heads/{ref}", method="DELETE")
+req.add_header("Authorization", "token " + token)
+req.add_header("Accept", "application/vnd.github+json")
+try:
+    with urllib.request.urlopen(req, timeout=60) as r:
+        print("deleted", ref, r.status)
+except urllib.error.HTTPError as e:
+    print("delete failed", e.code)
+PYEOF
+  endlog
 }
 
 # ---------------------------------------------------------------------------
@@ -287,20 +582,13 @@ update_resukisu() {
 
   # SUSFS v2.3 kernel patches require ReSukiSU origin/main; SUSFS v2.2.0 needs the
   # pinned commit recorded in this fork's gitlink.  UPDATE_RESUKISU can force main
-  # explicitly; otherwise it is derived from SUSFS_VERSION and MODULE.
-  #
-  #   no-kprobe is based on feat/susfs-v2.3  -> needs main
-  #   all-modules includes no-kprobe         -> needs main
+  # explicitly; otherwise it is derived from SUSFS_VERSION.
   RE_SUKISU_PIN="${RE_SUKISU_PIN:-59c99fdf1735c37681ff18c7ffd7834741dcccbf}"
   if [[ -z "${UPDATE_RESUKISU:-}" ]]; then
-    if [[ "${MODULE:-none}" == "no-kprobe" || "${MODULE:-none}" == "all" ]]; then
-      UPDATE_RESUKISU="true"
-    else
-      case "${SUSFS_VERSION}" in
-        v2.3|2.3) UPDATE_RESUKISU="true" ;;
-        *)        UPDATE_RESUKISU="false" ;;
-      esac
-    fi
+    case "${SUSFS_VERSION}" in
+      v2.3|2.3) UPDATE_RESUKISU="true" ;;
+      *)        UPDATE_RESUKISU="false" ;;
+    esac
   fi
   if [[ "${UPDATE_RESUKISU}" == "true" ]]; then
     git -C KernelSU fetch --unshallow origin 2>/dev/null || true
@@ -560,7 +848,11 @@ build_kernel() {
   # ---- Optional module CONFIG injection ------------------------------------
   # Each module branch only carries *code*; the symbols are turned on here so
   # the same branch can also be built with the module disabled.
-  apply_module_config "${OUT_DIR}/.config" "${MODULE:-none}"
+  apply_module_config "${OUT_DIR}/.config"
+  # Export the shared suffix so pack_anykernel3.sh names the zip identically.
+  MODULE_TAG="$(build_module_tag)"
+  export MODULE_TAG
+  gh_env MODULE_TAG "${MODULE_TAG}"
 
   "${MAKE}" -j"${JOBS}" -C "${KERNEL_DIR}" O="${OUT_DIR}" \
     "${common_make[@]}" \
@@ -734,7 +1026,7 @@ repack_boot() {
   gh_env RELEASE_NAME "${RELEASE_NAME}"
   gh_env BOOT_ARTIFACT "${BOOT_ARTIFACT}"
   gh_env SUSFS_VERSION "${SUSFS_VERSION}"
-  gh_env MODULE "${MODULE:-none}"
+  gh_env MODULES "$(module_list_csv)"
   gh_env KERNEL_BRANCH "${KERNEL_BRANCH}"
   gh_env VARIANT_SLUG "${VARIANT_SLUG}"
   gh_env DEVICE_TITLE "${DEVICE_TITLE}"
@@ -836,11 +1128,15 @@ fastboot -w
 Sideload or flash \`AnyKernel3-*.zip\` in a custom recovery, or use a kernel flasher app.
 This replaces the kernel **and** vendor WiFi \`qca_cld3_*.ko\` (\`do.modules=1\`). No KernelSU WiFi module install is needed.
 
+## Modules in this build
+
+$(module_feature_table)
+
 ## Notes
 - Device: ${DEVICE_TITLE}
 - Kernel: **${KERNEL_VER_LABEL}**
 - SUSFS: **${SUSFS_VERSION}** (kernel branch \`${KERNEL_BRANCH}\`)
-- Module: **${MODULE:-none}**$([[ "${MODULE:-none}" != "none" ]] && printf ' (%s)' "$(module_display_name "${MODULE}")")
+- Selected modules: **$(module_list_display)**
 - MYUI: 4.0
 - Android 12
 - ROM: ${ROM_ID}
@@ -863,8 +1159,10 @@ EOF
 
 main() {
   info "Variant=${VARIANT} Device=${DEVICE_TITLE} NFC=${ENABLE_NFC}"
-  info "Kernel branch=${KERNEL_BRANCH} label=${KERNEL_VER_LABEL} ROM_ID=${ROM_ID}"
+  info "Kernel branch=${KERNEL_BRANCH:-<to be merged>} label=${KERNEL_VER_LABEL} ROM_ID=${ROM_ID}"
+  info "Modules=$(module_list_csv)  SUSFS=${SUSFS_VERSION}"
   info "BUILD_ROOT=${BUILD_ROOT}"
+  resolve_kernel_tree
   fetch_kernel
   update_resukisu
   setup_toolchain
@@ -889,6 +1187,7 @@ main() {
     printf '%s\n' "${AK3_COMMIT}" > "${WORK_DIR}/ak3_commit.txt"
   fi
   write_release_notes
+  cleanup_kernel_tree
   info "Done. Artifacts in ${WORK_DIR}/release/"
   ls -lh "${WORK_DIR}/release/"
 }

@@ -185,15 +185,19 @@ pack_zip() {
   RESUKISU_DISPLAY="${RESUKISU_DISPLAY:-$(cat "${WORK_DIR}/resukisu_display.txt" 2>/dev/null || echo "${RESUKISU_VERSION}@ReSukiSU")}"
   ROM_ID="${ROM_ID:-$(cat "${WORK_DIR}/rom_id.txt" 2>/dev/null || echo S3RXC32.33-8-25)}"
 
-  # Module suffix tag: mirrors build_module_tag() in build_resukisu_boot.sh
-  # (SUSFS-only kernel branch; future modules append their tag here)
+  # Module suffix tag.  build_resukisu_boot.sh computes it once and exports it
+  # as MODULE_TAG so the two scripts can never drift apart.
   local module_tag build_num
-  module_tag=""
-  [[ "${ENABLE_SUSFS:-true}" == "true" ]] && module_tag+="-SUSFS${SUSFS_VERSION:-v2.2}"
+  if [[ -n "${MODULE_TAG:-}" ]]; then
+    module_tag="${MODULE_TAG}"
+  else
+    module_tag=""
+    [[ "${ENABLE_SUSFS:-true}" == "true" ]] && module_tag+="-SUSFS${SUSFS_VERSION:-v2.2}"
+  fi
   build_num="${BUILD_NUM:-r${GITHUB_RUN_NUMBER:-$(date -u +%Y%m%d%H%M%S)}}"
 
   # AnyKernel3-{device}-{variant}-{kver}{modules}-ReSukiSU-{build}
-  # e.g. AnyKernel3-xpeng-EdgeS30-5.4.302-SUSFSv2.2-ReSukiSU-r3.zip
+  # e.g. AnyKernel3-xpeng-EdgeS30-5.4.302-SUSFSv2.3-ReKernel-BBGuard-ReSukiSU-r5.zip
   local zip_name="AnyKernel3-${VARIANT_SLUG}-${KERNEL_VER_LABEL}${module_tag}-ReSukiSU-${build_num}.zip"
   local zip_path="${WORK_DIR}/release/${zip_name}"
 
