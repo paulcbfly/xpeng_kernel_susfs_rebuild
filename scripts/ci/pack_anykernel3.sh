@@ -189,11 +189,11 @@ pack_zip() {
   # (SUSFS-only kernel branch; future modules append their tag here)
   local module_tag build_num
   module_tag=""
-  [[ "${ENABLE_SUSFS:-true}" == "true" ]] && module_tag+="-SUSFS"
+  [[ "${ENABLE_SUSFS:-true}" == "true" ]] && module_tag+="-SUSFS${SUSFS_VERSION:-v2.2}"
   build_num="${BUILD_NUM:-r${GITHUB_RUN_NUMBER:-$(date -u +%Y%m%d%H%M%S)}}"
 
   # AnyKernel3-{device}-{variant}-{kver}{modules}-ReSukiSU-{build}
-  # e.g. AnyKernel3-xpeng-EdgeS30-5.4.302-SUSFS-ReSukiSU-r3.zip
+  # e.g. AnyKernel3-xpeng-EdgeS30-5.4.302-SUSFSv2.2-ReSukiSU-r3.zip
   local zip_name="AnyKernel3-${VARIANT_SLUG}-${KERNEL_VER_LABEL}${module_tag}-ReSukiSU-${build_num}.zip"
   local zip_path="${WORK_DIR}/release/${zip_name}"
 

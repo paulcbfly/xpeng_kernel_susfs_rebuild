@@ -46,7 +46,23 @@ BUILD_WLAN="${BUILD_WLAN:-true}"
 WLAN_TAG="${WLAN_TAG:-MMI-S3RXC32.33-8-29}"
 
 KERNEL_URL="${KERNEL_URL:-https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild.git}"
-KERNEL_BRANCH="${KERNEL_BRANCH:-5.4.302-s3rxc32.33-8-25-susfs}"
+
+# SUSFS version -> kernel branch mapping.
+#   v2.2 (default): pure r7 baseline, SUSFS v2.2.0, verified "mobile data works".
+#   v2.3           : same baseline + AstideLabs SUSFS v2.3 fs/ patches.
+# An explicit KERNEL_BRANCH always wins (handy for testing ad-hoc branches).
+SUSFS_VERSION="${SUSFS_VERSION:-v2.2}"
+if [[ -z "${KERNEL_BRANCH:-}" ]]; then
+  case "${SUSFS_VERSION}" in
+    v2.2|2.2)   KERNEL_BRANCH="5.4.302-s3rxc32.33-8-25-susfs" ;;
+    v2.3|2.3)   KERNEL_BRANCH="feat/susfs-v2.3" ;;
+    *)
+      echo "[!] Unknown SUSFS_VERSION=${SUSFS_VERSION} (use v2.2 or v2.3)" >&2
+      exit 1
+      ;;
+  esac
+fi
+KERNEL_BRANCH="${KERNEL_BRANCH}"
 KERNEL_DIR="${KERNEL_DIR:-${BUILD_ROOT}/.ci-src/android_kernel_motorola_xpeng}"
 
 case "${VARIANT}" in
@@ -158,15 +174,21 @@ update_resukisu() {
     git submodule update --init --recursive KernelSU
   fi
 
-  # ReSukiSU origin/main tracks simonpunk's latest susfs (v2.3+) which is NOT
-  # compatible with the kernel-side SUSFS v2.2.0 integration in this branch.
-  # Default: pin to the v2.2.0-compatible commit recorded in this fork's gitlink.
+  # SUSFS v2.3 kernel patches require ReSukiSU origin/main; SUSFS v2.2.0 needs the
+  # pinned commit recorded in this fork's gitlink.  UPDATE_RESUKISU can force main
+  # explicitly; otherwise it is derived from SUSFS_VERSION.
   RE_SUKISU_PIN="${RE_SUKISU_PIN:-59c99fdf1735c37681ff18c7ffd7834741dcccbf}"
-  if [[ "${UPDATE_RESUKISU:-false}" == "true" ]]; then
+  if [[ -z "${UPDATE_RESUKISU:-}" ]]; then
+    case "${SUSFS_VERSION}" in
+      v2.3|2.3) UPDATE_RESUKISU="true" ;;
+      *)        UPDATE_RESUKISU="false" ;;
+    esac
+  fi
+  if [[ "${UPDATE_RESUKISU}" == "true" ]]; then
     git -C KernelSU fetch --unshallow origin 2>/dev/null || true
     git -C KernelSU fetch origin main --tags --force
     git -C KernelSU checkout -f origin/main
-    info "ReSukiSU updated to origin/main (NOTE: latest main requires SUSFS v2.3+ kernel patches; build may fail)"
+    info "ReSukiSU updated to origin/main (SUSFS v${SUSFS_VERSION#v} kernel patches)"
   else
     git -C KernelSU checkout -f "${RE_SUKISU_PIN}" 2>/dev/null \
       || git -C KernelSU checkout -f FETCH_HEAD 2>/dev/null || true
@@ -554,10 +576,10 @@ repack_boot() {
   cp -f new-boot.img "${WORK_DIR}/release/boot_ksu.img"
   cp -f new-boot.img "${WORK_DIR}/release/boot.img"
 
-  # boot_ksu + enabled modules (e.g. boot_ksu-SUSFS.img), per user-approved naming
+  # boot_ksu + SUSFS version (e.g. boot_ksu-SUSFSv2.2.img), per user-approved naming
   local module_tag
   module_tag="$(build_module_tag)"
-  local out_name="boot_ksu${module_tag}.img"
+  local out_name="boot_ksu${module_tag}-SUSFS${SUSFS_VERSION}.img"
   cp -f new-boot.img "${WORK_DIR}/release/${out_name}"
 
   popd >/dev/null
@@ -570,8 +592,8 @@ repack_boot() {
   fi
 
   case "${VARIANT}" in
-    edge-s30) RELEASE_TAG="MMI-${KERNEL_VER_LABEL}-${ROM_ID}-ReSukiSU-EdgeS30-${build_id}" ;;
-    g200)     RELEASE_TAG="MMI-${KERNEL_VER_LABEL}-${ROM_ID}-ReSukiSU-G200-${build_id}" ;;
+    edge-s30) RELEASE_TAG="MMI-${KERNEL_VER_LABEL}-${ROM_ID}-ReSukiSU-EdgeS30-SUSFS${SUSFS_VERSION}-${build_id}" ;;
+    g200)     RELEASE_TAG="MMI-${KERNEL_VER_LABEL}-${ROM_ID}-ReSukiSU-G200-SUSFS${SUSFS_VERSION}-${build_id}" ;;
   esac
 
   RESUKISU_DISPLAY="${RESUKISU_DISPLAY:-$(cat "${WORK_DIR}/resukisu_display.txt" 2>/dev/null || echo "${RESUKISU_VERSION}@ReSukiSU")}"
@@ -582,6 +604,8 @@ repack_boot() {
   gh_env RELEASE_TAG "${RELEASE_TAG}"
   gh_env RELEASE_NAME "${RELEASE_NAME}"
   gh_env BOOT_ARTIFACT "${BOOT_ARTIFACT}"
+  gh_env SUSFS_VERSION "${SUSFS_VERSION}"
+  gh_env KERNEL_BRANCH "${KERNEL_BRANCH}"
   gh_env VARIANT_SLUG "${VARIANT_SLUG}"
   gh_env DEVICE_TITLE "${DEVICE_TITLE}"
   gh_env ROM_ID "${ROM_ID}"
@@ -647,6 +671,7 @@ pack_anykernel3() {
     WLAN_OUT_DIR="${WLAN_OUT_DIR:-${WORK_DIR}/wlan-kos}" \
     GITHUB_PROXY="${GITHUB_PROXY:-}" \
     ENABLE_SUSFS="${ENABLE_SUSFS:-true}" \
+    SUSFS_VERSION="${SUSFS_VERSION}" \
     KERNEL_IMAGE="${WORK_DIR}/release/Image" \
     bash "${pack_script}"
   endlog
@@ -684,6 +709,7 @@ This replaces the kernel **and** vendor WiFi \`qca_cld3_*.ko\` (\`do.modules=1\`
 ## Notes
 - Device: ${DEVICE_TITLE}
 - Kernel: **${KERNEL_VER_LABEL}**
+- SUSFS: **${SUSFS_VERSION}** (kernel branch \`${KERNEL_BRANCH}\`)
 - MYUI: 4.0
 - Android 12
 - ROM: ${ROM_ID}
@@ -693,12 +719,12 @@ This replaces the kernel **and** vendor WiFi \`qca_cld3_*.ko\` (\`do.modules=1\`
 - AnyKernel3: [osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3) \`${AK3_COMMIT}\` (\`do.modules=1\`, pushes kos to \`/vendor/lib/modules/\`)
 
 ## Assets
-- \`boot_ksu.img\` — OEM boot.img with replaced ReSukiSU kernel
+- \`boot_ksu-SUSFS${SUSFS_VERSION}.img\` — OEM boot.img with replaced ReSukiSU kernel
 - \`Image\` — raw ARM64 kernel Image
 - \`AnyKernel3-*.zip\` — flashable zip (kernel + vendor WiFi kos; no KernelSU WiFi module needed)
 - \`wlan_crc_match_*-ksu-*.zip\` — optional KernelSU/Magisk overlay **only if** you flash \`boot_ksu.img\` via fastboot (does not replace vendor kos)
 
-> Built automatically from \`xpeng_kernel_susfs_rebuild\` (\`5.4.302-s3rxc32.33-8-25-ReSukiSU\`) using kernel sources from [android_kernel_motorola_xpeng_rebuild @ 5.4.302-s3rxc32.33-8-25-susfs](https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild/tree/5.4.302-s3rxc32.33-8-25-susfs) with ReSukiSU + live-built WiFi kos + latest AnyKernel3 upstream.
+> Built automatically from \`xpeng_kernel_susfs_rebuild\` (\`5.4.302-s3rxc32.33-8-25-ReSukiSU\`) using kernel sources from [android_kernel_motorola_xpeng_rebuild @ ${KERNEL_BRANCH}](https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild/tree/${KERNEL_BRANCH}) with ReSukiSU + live-built WiFi kos + latest AnyKernel3 upstream.
 EOF
   gh_env RELEASE_NOTES "${WORK_DIR}/release/RELEASE_NOTES.md"
   info "Release notes written"
