@@ -576,10 +576,16 @@ repack_boot() {
   cp -f new-boot.img "${WORK_DIR}/release/boot_ksu.img"
   cp -f new-boot.img "${WORK_DIR}/release/boot.img"
 
-  # boot_ksu + SUSFS version (e.g. boot_ksu-SUSFSv2.2.img), per user-approved naming
-  local module_tag
+  # boot_ksu + SUSFS version (e.g. boot_ksu-SUSFSv2.2.img), per user-approved naming.
+  # module_tag is "-SUSFS" when enabled; append the version to it so we get
+  # "-SUSFSv2.2", NOT "-SUSFS-SUSFSv2.2".  When SUSFS is off, no version suffix.
+  local module_tag out_name
   module_tag="$(build_module_tag)"
-  local out_name="boot_ksu${module_tag}-SUSFS${SUSFS_VERSION}.img"
+  if [[ -n "${module_tag}" ]]; then
+    out_name="boot_ksu${module_tag}${SUSFS_VERSION}.img"
+  else
+    out_name="boot_ksu.img"
+  fi
   cp -f new-boot.img "${WORK_DIR}/release/${out_name}"
 
   popd >/dev/null
