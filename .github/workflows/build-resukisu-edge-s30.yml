@@ -83,7 +83,10 @@ jobs:
           MODULES: ${{ inputs.modules || '' }}
           SUSFS_VERSION: ${{ inputs.susfs_version || 'v2.2' }}
           UPDATE_RESUKISU: ${{ inputs.update_resukisu || '' }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT authorised on BOTH the build and the kernel repo; the
+          # default GITHUB_TOKEN cannot write to the kernel repo.
+          KERNEL_SYNC_TOKEN: ${{ secrets.KERNEL_SYNC_TOKEN }}
+          GH_TOKEN: ${{ secrets.KERNEL_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
           KERNEL_URL: https://github.com/paulcbfly/android_kernel_motorola_xpeng_rebuild.git
           CLANG_GIT_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
           GCC_GIT_URL: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git

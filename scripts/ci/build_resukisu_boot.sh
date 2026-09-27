@@ -335,9 +335,12 @@ resolve_kernel_tree() {
   [[ "${#MODULE_KEYS[@]}" -le 1 ]] && return 0
   [[ -n "${KERNEL_BRANCH}" ]] && return 0        # explicit override wins
 
-  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  # Writing to the kernel repo needs a token that is authorised on BOTH repos.
+  # The default GITHUB_TOKEN is scoped to this build repo only and fails with
+  # "Resource not accessible by integration", so prefer a PAT secret.
+  local token="${KERNEL_SYNC_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
   if [[ -z "${token}" ]]; then
-    die "Cannot merge modules without a GitHub token (set GH_TOKEN)"
+    die "Cannot merge modules without a token (set KERNEL_SYNC_TOKEN)"
   fi
   command -v python3 >/dev/null || die "python3 is required to merge module branches"
 
@@ -504,7 +507,7 @@ PYEOF
 # Delete the throwaway merge branch once the build is done.
 cleanup_kernel_tree() {
   [[ -z "${KERNEL_TREE_TMP_BRANCH}" ]] && return 0
-  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  local token="${KERNEL_SYNC_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
   [[ -z "${token}" ]] && return 0
   log "Clean up temporary merge branch"
   python3 - "${KERNEL_TREE_TMP_BRANCH}" <<'PYEOF'
